@@ -9,11 +9,15 @@ const JOBFEED_BIN = createRequire(import.meta.url).resolve("jobfeed/bin/jobfeed.
 /** 1 = daily jobs, 2 = remote companies, 3 = both (jobfeed's own menu). */
 export type JobfeedChoice = "1" | "2" | "3";
 
-/** Runs the jobfeed CLI into `baseDir`, answering its two prompts over stdin. */
-export async function runJobfeed(baseDir: string, choice: JobfeedChoice = "3"): Promise<void> {
+/**
+ * Runs the jobfeed CLI into `baseDir`, answering its two prompts over stdin.
+ * Returns false when jobfeed exits non-zero, which it also does when only one section
+ * (e.g. the remote crawl) failed and the other sections' Excel files were still written.
+ */
+export async function runJobfeed(baseDir: string, choice: JobfeedChoice = "3"): Promise<boolean> {
   fs.mkdirSync(baseDir, { recursive: true });
   const child = spawn(process.execPath, [JOBFEED_BIN], { stdio: ["pipe", "inherit", "inherit"] });
   child.stdin.end(`${choice}\n${baseDir}\n`);
   const [code] = await once(child, "close");
-  if (code !== 0) throw new Error(`jobfeed exited with code ${code}`);
+  return code === 0;
 }

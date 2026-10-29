@@ -10,8 +10,13 @@
 npm install                          # installs jobfeed + sets up husky hooks
 cp .env.example .env                 # optional: change JOBFEED_INPUT_DIR
 npm start -- fetch --choice 1        # run jobfeed into data/input (1 daily, 2 remote, 3 both)
-npm start -- import                  # list Excel files found in data/input
+npx playwright install chromium      # one-time: download the browser Playwright drives
+npm start -- import                  # read every Excel file in data/input, rows per sheet
+npm start -- shortlist               # filter to early-career web roles open to India -> data/output/shortlist-<date>.json
+npm start -- browser --url <apply-link-from-your-excel>    # open a job portal; any login is kept in private/browser-profile
 ```
+
+To score the shortlist on your Claude plan (no API key), open this folder in Claude Code and run `/analyze-jobs`; it writes `data/output/analysis-<date>.md`.
 
 Needs Node.js 23.6+ (runs TypeScript directly). The pre-commit hook runs `npm run typecheck` and `npm test`.
 

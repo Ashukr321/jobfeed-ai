@@ -1,9 +1,0 @@
-{
-  "preferredTitles": ["Frontend Developer", "React Developer", "SDE-1"],
-  "preferredWorkModes": ["remote", "hybrid"],
-  "preferredLocations": ["Pune", "Bengaluru", "Gurugram", "Noida"],
-  "skills": ["JavaScript", "TypeScript", "React", "Next.js", "Node.js"],
-  "yearsOfExperience": 1,
-  "resumePath": "./private/resume.pdf",
-  "minimumMatchScore": 70
-}
