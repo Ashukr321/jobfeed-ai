@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { parseArgs } from "node:util";
 import path from "node:path";
@@ -12,15 +13,16 @@ import { runJobfeed, type JobfeedChoice } from "./jobfeed/runner.ts";
 const USAGE = `Usage: npm start -- <command> [options]
 
 Commands:
-  fetch    Run jobfeed and save its Excel files into the input folder
-  import   Read the Excel files in the input folder and show rows per sheet
+  fetch      Run jobfeed and save its Excel files into the input folder
+  import     Read the Excel files in the input folder and show rows per sheet
   shortlist  Filter the jobs to early-career web roles open to India, save to data/output
-  browser  Open the automation browser (log in to job portals once; the session is kept)
+  open <url>     Open a job link as a new tab in your everyday browser (your own Chrome, with your logins)
+  browser [url]  Open Google Chrome with the jobfeed profile, for automation (log in to job portals once; the session is kept)
 
 Options:
   --input <dir>     Input folder (default: ${settings.inputDir})
   --choice <1|2|3>  fetch only: 1 daily jobs, 2 remote companies, 3 both (default 3)
-  --url <url>       browser only: page to open first`;
+  --url <url>       browser only: page to open first (same as browser <url>)`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -71,10 +73,28 @@ switch (positionals[0]) {
     console.log(`${jobs.length} unique jobs, ${shortlist.length} kept -> ${out}`);
     break;
   }
+  case "open": {
+    const url = values.url ?? positionals[1];
+    // Only web links: the opener would also launch local files or programs.
+    if (!url || !/^https?:$/.test(URL.parse(url)?.protocol ?? "")) throw new Error("open needs an http(s) link, e.g. npm start -- open \"https://...\"");
+    // Hands the link to the OS default browser; Chrome blocks automation of the everyday profile, so this only opens it.
+    // On Windows, explorer.exe silently ignored these links; url.dll is the shell's own URL handler.
+    const [cmd, ...args] = process.platform === "win32" ? ["rundll32", "url.dll,FileProtocolHandler"] : [process.platform === "darwin" ? "open" : "xdg-open"];
+    spawn(cmd, [...args, url], { detached: true, stdio: "ignore" }).unref();
+    console.log(`Opened in your default browser: ${url}`);
+    break;
+  }
   case "browser": {
-    const context = await openBrowser();
+    const context = await openBrowser().catch((err: Error) => {
+      // Only one Chromium can use the saved profile; a second launch hands off to it and exits.
+      if (!err.message.includes("existing browser session")) throw err;
+      console.error("The jobfeed Chrome window is already open. Use that window, or close it and run this again.");
+      process.exit(1);
+    });
     const page = context.pages()[0] ?? (await context.newPage());
-    if (values.url) await page.goto(values.url);
+    // Also take the URL as a plain argument: `npm start browser --url X` (without --) makes npm drop the flag but keep X.
+    const url = values.url ?? positionals[1];
+    if (url) await page.goto(url);
     console.log(`Browser open (profile: ${settings.browserProfileDir}). Close the window when done.`);
     await new Promise((resolve) => context.once("close", resolve));
     break;

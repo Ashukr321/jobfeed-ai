@@ -6,19 +6,48 @@
 
 ## Quick start
 
+Needs Node.js 23.6+ (runs TypeScript directly, no build step).
+
+### One-time setup
+
 ```bash
-npm install                          # installs jobfeed + sets up husky hooks
-cp .env.example .env                 # optional: change JOBFEED_INPUT_DIR
-npm start -- fetch --choice 1        # run jobfeed into data/input (1 daily, 2 remote, 3 both)
-npx playwright install chromium      # one-time: download the browser Playwright drives
-npm start -- import                  # read every Excel file in data/input, rows per sheet
-npm start -- shortlist               # filter to early-career web roles open to India -> data/output/shortlist-<date>.json
-npm start -- browser --url <apply-link-from-your-excel>    # open a job portal; any login is kept in private/browser-profile
+npm install                          # installs jobfeed, ExcelJS, Playwright + sets up husky hooks
+cp .env.example .env                 # optional: change JOBFEED_INPUT_DIR / BROWSER_PROFILE_DIR
 ```
 
-To score the shortlist on your Claude plan (no API key), open this folder in Claude Code and run `/analyze-jobs`; it writes `data/output/analysis-<date>.md`.
+The `browser` command drives your installed Google Chrome, so no extra browser download is needed. It uses its own profile in `private/browser-profile`, not your everyday Chrome profile (Chrome blocks automation there), so log in to each job site once in that window.
 
-Needs Node.js 23.6+ (runs TypeScript directly). The pre-commit hook runs `npm run typecheck` and `npm test`.
+Then fill in `profiles/candidate-profile.json` (gitignored) with your verified details.
+
+### Daily run
+
+```bash
+npm start -- fetch --choice 3        # run jobfeed into data/input (1 daily jobs, 2 remote companies, 3 both)
+npm start -- import                  # check: rows and columns per Excel sheet
+npm start -- shortlist               # filter to early-career web roles open to India -> data/output/shortlist-<date>.json
+```
+
+Then open this folder in Claude Code and run `/analyze-jobs`. It scores the shortlist on your Claude plan (no API key) and writes `data/output/analysis-<date>.md`.
+
+### Other commands
+
+```bash
+npm start                            # show usage and all options
+npm start -- import --input ./some/other/folder     # read Excel files from another folder (works for shortlist too)
+npm start -- open "<apply-link-from-your-excel>"         # open the job in your everyday Chrome (your logins) to apply yourself
+npm start -- browser                 # open Chrome with the jobfeed profile (blank page)
+npm start -- browser "<apply-link-from-your-excel>"      # open a job page (quote the link); logins are kept in private/browser-profile
+```
+
+### Test and check
+
+```bash
+npm test                             # all unit tests (tests/*.test.ts)
+node --test tests/jobs.test.ts       # one test file
+npm run typecheck                    # TypeScript type check (tsc, no output files)
+```
+
+The pre-commit hook runs `npm run typecheck` and `npm test`, so a failing check blocks the commit.
 
 ## 1. Project Overview
 
