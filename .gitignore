@@ -1,0 +1,12 @@
+node_modules/
+.env
+*.log
+
+# Job data, private profile, resumes and browser state stay local
+data/*/*
+!data/*/.gitkeep
+profiles/*
+!profiles/*.example.json
+private/
+
+*.todo

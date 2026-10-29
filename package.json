@@ -1,0 +1,30 @@
+{
+  "name": "jobfeed-ai",
+  "version": "1.0.0",
+  "description": "AI-assisted job analysis and application workflow on top of the jobfeed CLI.",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.ts",
+    "typecheck": "tsc",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "prepare": "husky"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com-mygithub:Ashukr321/jobfeed-ai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "jobfeed": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "husky": "^9.1.7",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=23.6"
+  }
+}

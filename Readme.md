@@ -4,6 +4,17 @@
 > **Purpose:** Extend the existing `jobfeed` job-discovery CLI with
 > AI-assisted job analysis and a controlled job-application workflow.
 
+## Quick start
+
+```bash
+npm install                          # installs jobfeed + sets up husky hooks
+cp .env.example .env                 # optional: change JOBFEED_INPUT_DIR
+npm start -- fetch --choice 1        # run jobfeed into data/input (1 daily, 2 remote, 3 both)
+npm start -- import                  # list Excel files found in data/input
+```
+
+Needs Node.js 23.6+ (runs TypeScript directly). The pre-commit hook runs `npm run typecheck` and `npm test`.
+
 ## 1. Project Overview
 
 The existing `jobfeed` command discovers jobs (including remote roles
