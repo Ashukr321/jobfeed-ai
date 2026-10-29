@@ -34,7 +34,33 @@ export function toJob(row: SheetRow, sheet: string): Job | null {
   };
 }
 
+/** An entry of data/output/applications.json, written by the apply-job skill. */
+export interface Application {
+  url: string;
+  applyUrl?: string;
+  company: string;
+  title: string;
+}
+
+const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/** The link without utm_ tracking params or #fragment, so the same posting matches across days. */
+export function normalizeUrl(link: string): string {
+  const url = URL.parse(link);
+  if (!url) return link;
+  url.hash = "";
+  for (const p of [...url.searchParams.keys()]) if (p.startsWith("utm_")) url.searchParams.delete(p);
+  return url.href.replace(/\/$/, "");
+}
+
 /** Keeps the first job per apply URL (jobfeed repeats Himalayas jobs in the Remote Jobs sheet). */
 export function dedupeByUrl(jobs: Job[]): Job[] {
-  return [...new Map(jobs.toReversed().map((j) => [j.url, j])).values()].toReversed();
+  return [...new Map(jobs.toReversed().map((j) => [normalizeUrl(j.url), j])).values()].toReversed();
+}
+
+/** Drops jobs already in applications.json (any status), matched by job or apply URL, or by company + title. */
+export function dropApplied(jobs: Job[], applications: Application[]): Job[] {
+  const seen = new Set(applications.flatMap((a) => [normalizeUrl(a.url), a.applyUrl && normalizeUrl(a.applyUrl), `${words(a.company)}|${words(a.title)}`]));
+  // A blank company would make every job with the same title look applied, so only URLs count then.
+  return jobs.filter((j) => !seen.has(normalizeUrl(j.url)) && !(j.company && seen.has(`${words(j.company)}|${words(j.title)}`)));
 }

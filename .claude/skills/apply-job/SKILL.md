@@ -5,13 +5,15 @@ description: Fill a job application form in the user's own Chrome from profiles/
 
 # Apply to a job (runs on the user's Claude plan, in their own Chrome)
 
-Claude Code is the agent and the Claude in Chrome extension does the clicking, in the user's everyday Chrome with their logins. There is no API key and no separate browser. The user approves the filled values and the final submit for every job.
+Claude Code is the agent and the Claude in Chrome extension does the clicking, in the user's everyday Chrome with their logins. There is no API key and no separate browser.
+
+**Auto-submit (the user's standing instruction):** when every value on the form comes from the profile or answers the user has already given, fill it and submit without asking. Still stop and ask for any fact the profile lacks, any drafted free-text answer, and any login, OTP or CAPTCHA.
 
 ## 0. Pick the job
 
 - If the user gave a link (`/apply-job <url>`), use it.
 - Otherwise take the highest-scored `apply` row in the latest `data/output/analysis-*.md` that is not in `data/output/applications.json`. Name the job and company to the user before starting.
-- If `applications.json` already shows this URL (or the same company + title) as `submitted`, stop and say so.
+- If `applications.json` already shows this job as `submitted` or `verification_required`, stop and say so. Match its `url` or `applyUrl` ignoring `utm_` params, or the same company + title ignoring case and punctuation. For any other status, resume that entry and update it instead of adding a second one.
 
 ## 1. Connect to Chrome
 
@@ -52,19 +54,19 @@ For everything else:
 
 ## 5. Approve, then fill
 
-Show the user the full **field → value** list for this page, with resume file name and drafts included. Ask: "Fill these?" Only after a yes, fill the fields with `form_input` and `file_upload`.
+If every value comes from the profile or earlier answers, fill it straight away with `form_input` and `file_upload`. Otherwise show the user the new values or drafts and fill them after a yes.
 
 For a multi-page form, repeat steps 3-5 for each page. Click Next or Continue only after that page's values were approved.
 
 ## 6. Review, then submit
 
-- Take a screenshot. List what was filled and any required field still empty.
-- Ask: "Submit the application to <company> for <title>?" **Never submit without a yes for this specific job.**
+- Read the form back and check that no required field is empty and no error is shown. If something is wrong, fix it, or stop and tell the user.
+- Submit. Auto-submit is the user's standing instruction, so don't ask again. Never submit a form holding a value the user hasn't seen or given.
 - After submitting, look for a confirmation page, message or reference number. If you find one, the status is `submitted`. If not, it's `verification_required`: ask the user to check their email or the portal.
 
 ## 7. Log it
 
-Append to `data/output/applications.json` (create it as `[]` if missing; it's gitignored):
+Append to `data/output/applications.json` (create it as `[]` if missing; it's gitignored). If this job already has an entry, update that entry instead, so each job appears once:
 
 ```json
 { "url": "...", "company": "...", "title": "...", "status": "submitted", "appliedAt": "<ISO time>", "confirmation": "<reference or message>", "notes": "<anything the user should know>" }
@@ -80,3 +82,9 @@ Close the tabs you opened, unless the user wants to keep them.
 - Use only facts from the profile and the user's answers. Never invent experience, skills, degrees or numbers.
 - Never enter passwords, OTPs, card details or government ID numbers. The user types those.
 - One job at a time. Never submit the same job twice.
+
+## Site notes
+
+- **Himalayas:** the Apply button opens a "Generate cover letter" pop-up whose "I'm ready to apply" link (`himalayas.app/apply/<id>`) leads to the real form. Read that link's `href` and open it in your own tab. Clicking it opens a tab outside your group.
+- **SmartRecruiters (Easy Apply):** fields live in shadow DOM, so `read_page` and `find` can't see them. Focus each input with JavaScript (walk the `shadowRoot`s) and type with `computer`. To upload the resume, add a temporary `<input type=file>` to the page, `file_upload` into it, copy the file to the shadow input with `DataTransfer`, then remove the temporary input. Experience and Education are required; each entry has its own Save button. Month pickers open on the current year: use "Previous year", then the month.
+- `file_upload` can only read files inside the project, so the resume lives at `private/Ashutosh_Kumar_Resume.pdf`.

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import { parseArgs } from "node:util";
 import path from "node:path";
@@ -6,7 +7,7 @@ import { settings } from "./config/settings.ts";
 import { openBrowser } from "./browser/browser-manager.ts";
 import { discoverExcelFiles } from "./excel/discover-files.ts";
 import { readExcelRows, type SheetData } from "./excel/read-rows.ts";
-import { dedupeByUrl, toJob } from "./jobs/normalize.ts";
+import { dedupeByUrl, dropApplied, toJob, type Application } from "./jobs/normalize.ts";
 import { isCandidateJob } from "./jobs/prefilter.ts";
 import { runJobfeed, type JobfeedChoice } from "./jobfeed/runner.ts";
 
@@ -16,6 +17,7 @@ Commands:
   fetch      Run jobfeed and save its Excel files into the input folder
   import     Read the Excel files in the input folder and show rows per sheet
   shortlist  Filter the jobs to early-career web roles open to India, save to data/output
+  run        fetch + shortlist, then Claude Code scores the jobs and applies to each one in your Chrome (/apply-all)
   open <url>     Open a job link as a new tab in your everyday browser (your own Chrome, with your logins)
   browser [url]  Open Google Chrome with the jobfeed profile, for automation (log in to job portals once; the session is kept)
 
@@ -50,29 +52,49 @@ function listFiles() {
   for (const f of files) console.log(`  ${path.relative(inputDir, f)}`);
 }
 
+async function fetchJobs() {
+  if (!["1", "2", "3"].includes(values.choice)) throw new Error("--choice must be 1, 2 or 3");
+  if (!(await runJobfeed(inputDir, values.choice as JobfeedChoice))) {
+    console.warn("Warning: jobfeed reported a failed section (see ✖ above); listing whatever it saved.");
+    process.exitCode = 1;
+  }
+  listFiles();
+}
+
+/** Writes data/output/shortlist-<date>.json, leaving out jobs already applied to, and returns how many jobs were kept. */
+async function writeShortlist(): Promise<number> {
+  const jobs = dedupeByUrl((await readAllSheets()).flatMap((s) => s.rows.map((r) => toJob(r, s.sheet)).filter((j) => j !== null)));
+  const appliedFile = path.join(settings.outputDir, "applications.json");
+  // A broken file throws instead of being treated as empty, which would re-apply to every job.
+  const applications: Application[] = fs.existsSync(appliedFile) ? JSON.parse(fs.readFileSync(appliedFile, "utf8")) : [];
+  const candidates = jobs.filter(isCandidateJob);
+  const shortlist = dropApplied(candidates, applications);
+  const out = path.join(settings.outputDir, `shortlist-${new Date().toLocaleDateString("en-CA")}.json`);
+  fs.mkdirSync(settings.outputDir, { recursive: true });
+  fs.writeFileSync(out, JSON.stringify(shortlist, null, 2));
+  console.log(`${jobs.length} unique jobs, ${candidates.length} match, ${candidates.length - shortlist.length} already applied, ${shortlist.length} kept -> ${out}`);
+  return shortlist.length;
+}
+
 switch (positionals[0]) {
   case "fetch":
-    if (!["1", "2", "3"].includes(values.choice)) throw new Error("--choice must be 1, 2 or 3");
-    if (!(await runJobfeed(inputDir, values.choice as JobfeedChoice))) {
-      console.warn("Warning: jobfeed reported a failed section (see ✖ above); listing whatever it saved.");
-      process.exitCode = 1;
-    }
-    listFiles();
+    await fetchJobs();
     break;
   case "import":
     for (const s of await readAllSheets()) {
       console.log(`${path.relative(inputDir, s.file)} [${s.sheet}]: ${s.rows.length} rows — ${s.headers.join(", ")}`);
     }
     break;
-  case "shortlist": {
-    const jobs = dedupeByUrl((await readAllSheets()).flatMap((s) => s.rows.map((r) => toJob(r, s.sheet)).filter((j) => j !== null)));
-    const shortlist = jobs.filter(isCandidateJob);
-    const out = path.join(settings.outputDir, `shortlist-${new Date().toLocaleDateString("en-CA")}.json`);
-    fs.mkdirSync(settings.outputDir, { recursive: true });
-    fs.writeFileSync(out, JSON.stringify(shortlist, null, 2));
-    console.log(`${jobs.length} unique jobs, ${shortlist.length} kept -> ${out}`);
+  case "shortlist":
+    await writeShortlist();
     break;
-  }
+  case "run":
+    await fetchJobs();
+    if ((await writeShortlist()) === 0) break;
+    // Hands over to Claude Code in this terminal; it applies one job at a time and asks you when it needs you.
+    // shell: true so Windows finds claude.cmd.
+    await once(spawn("claude", ["--chrome", "/apply-all"], { stdio: "inherit", shell: true }), "close");
+    break;
   case "open": {
     const url = values.url ?? positionals[1];
     // Only web links: the opener would also launch local files or programs.

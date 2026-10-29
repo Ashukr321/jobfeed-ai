@@ -1,682 +1,179 @@
-# Jobfeed AI --- Product Requirements & Workflow
+# jobfeed-ai
 
-> **Working repository name:** `jobfeed-ai`\
-> **Purpose:** Extend the existing `jobfeed` job-discovery CLI with
-> AI-assisted job analysis and a controlled job-application workflow.
+AI-assisted job shortlisting and applications, built on top of the [`jobfeed`](https://www.npmjs.com/package/jobfeed) job-discovery CLI.
 
-## Quick start
+`jobfeed` finds jobs and exports them to Excel. `jobfeed-ai` reads those files, filters them to relevant roles, has Claude Code score each job against your profile, and then fills and submits the application forms in your own Chrome.
 
-Needs Node.js 23.6+ (runs TypeScript directly, no build step).
+- **No API key.** Scoring and applying run inside Claude Code on your Claude plan; the browser work goes through the Claude in Chrome extension.
+- **No fabrication.** Every form value comes from your profile or an answer you gave. Anything missing is asked, never guessed.
+- **No double applies.** Every outcome is logged, and a job already marked `submitted` is never applied to again.
 
-### One-time setup
+## How it works
 
-```bash
-npm install                          # installs jobfeed, ExcelJS, Playwright + sets up husky hooks
-cp .env.example .env                 # optional: change JOBFEED_INPUT_DIR / BROWSER_PROFILE_DIR
+```mermaid
+flowchart LR
+    A[jobfeed<br/>fetch] --> B[Excel files<br/>data/input]
+    B --> C[shortlist<br/>dedupe + rule filter]
+    C --> D["/analyze-jobs<br/>Claude scores vs profile"]
+    D --> E["/apply-job<br/>fill + submit in Chrome"]
+    E --> F[applications.json<br/>status log]
 ```
 
-The `browser` command drives your installed Google Chrome, so no extra browser download is needed. It uses its own profile in `private/browser-profile`, not your everyday Chrome profile (Chrome blocks automation there), so log in to each job site once in that window.
+| Step | Command | Output |
+| --- | --- | --- |
+| Fetch | `npm start -- fetch` | `data/input/<date>/*.xlsx` |
+| Shortlist | `npm start -- shortlist` | `data/output/shortlist-<date>.json` |
+| Score | `/analyze-jobs` (Claude Code) | `data/output/analysis-<date>.md` |
+| Apply | `/apply-job` or `/apply-all` (Claude Code) | `data/output/applications.json` |
 
-Then fill in `profiles/candidate-profile.json` (gitignored) with your verified details.
+`npm start -- run` chains all four.
 
-### Daily run
+## Requirements
+
+- **Node.js 23.6+** (runs TypeScript directly, no build step)
+- **Google Chrome**
+- **[Claude Code](https://claude.com/claude-code)** on a paid Claude plan (Pro or higher)
+- **Claude in Chrome** extension, signed in with the same Claude account
+
+## Setup
 
 ```bash
-npm start -- fetch --choice 3        # run jobfeed into data/input (1 daily jobs, 2 remote companies, 3 both)
-npm start -- import                  # check: rows and columns per Excel sheet
-npm start -- shortlist               # filter to early-career web roles open to India -> data/output/shortlist-<date>.json
+npm install
+cp .env.example .env
 ```
 
-Then open this folder in Claude Code and run `/analyze-jobs`. It scores the shortlist on your Claude plan (no API key) and writes `data/output/analysis-<date>.md`.
+`npm install` also installs the git hooks. Editing `.env` is optional; the defaults work.
 
-### Applying (agent in your own Chrome)
+Install the Claude in Chrome extension and keep Chrome open:
 
-One-time: install the **Claude in Chrome** extension from the Chrome Web Store and sign in with the same Claude account you use for Claude Code. Keep Chrome open.
+```bash
+npm start -- open "https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn"
+```
+
+Create your candidate profile at `profiles/candidate-profile.json` and put your resume under `private/` (see [Candidate profile](#candidate-profile)).
+
+## Usage
+
+### Full pipeline
+
+```bash
+npm start -- run
+```
+
+Fetches jobs, writes the shortlist, then starts Claude Code with `/apply-all`. It scores the shortlist and applies to each `apply` job in turn, highest score first. It stops and asks when it needs you: a login, OTP or CAPTCHA, a fact your profile doesn't have, or a drafted free-text answer to approve. At the end it prints a summary table with a status for each job.
+
+### Step by step
+
+```bash
+npm start -- fetch --choice 3   # 1 = daily jobs, 2 = remote companies, 3 = both
+npm start -- import             # check rows and columns per Excel sheet
+npm start -- shortlist          # filter to relevant roles
+```
 
 Then, in Claude Code in this folder:
 
 ```text
-/apply-job                      # next best "apply" job from the latest analysis report
-/apply-job https://...          # or a specific job link
+/analyze-jobs                   # score the shortlist, write the ranked report
+/apply-job                      # apply to the next best unapplied "apply" job
+/apply-job https://...          # apply to a specific job link
+/apply-all                      # apply to every "apply" job in the latest report
 ```
 
-How it works (no API key: the model is Claude via your plan, and the agent is Claude Code plus the extension):
+### CLI reference
 
-1. Opens the job in a new tab of your everyday Chrome, clicks Apply and follows the job site to the company's application form.
-2. Reads the form and fills values from `profiles/candidate-profile.json`. It reuses earlier answers from `customAnswers`, and uploads your resume from `resumePath`.
-3. Asks you for anything the profile doesn't have (notice period, CTC, …), drafts open-ended answers from your profile, and saves both for next time.
-4. Shows you every field and value before typing, and asks again before submitting. It never types passwords or OTPs, and never solves CAPTCHAs; those are yours to do.
-5. Checks for a confirmation and logs the result in `data/output/applications.json`, which prevents applying twice.
+| Command | Description |
+| --- | --- |
+| `fetch [--choice 1\|2\|3]` | Run `jobfeed` and save its Excel files into the input folder |
+| `import` | List each Excel sheet with its row count and column names |
+| `shortlist` | Dedupe jobs and keep early-career web roles open to India |
+| `run` | `fetch` + `shortlist`, then hand over to Claude Code (`/apply-all`) |
+| `open <url>` | Open a link in your default browser, to apply by hand |
+| `browser [url]` | Open Chrome with the dedicated Playwright profile (`private/browser-profile`) |
 
-### Other commands
+`--input <dir>` reads Excel files from another folder (`fetch`, `import`, `shortlist`). Run `npm start` with no command to print usage.
+
+## Shortlist rules
+
+The shortlist is a cheap rule filter in [src/jobs/prefilter.ts](src/jobs/prefilter.ts) that runs before any Claude scoring. A job is kept when:
+
+- the title matches a web or full-stack role (frontend, React, Next.js, Node, MERN, SDE, software engineer, …),
+- the title is not senior, lead, manager, intern, SDE-2/3, or asking for 3+ years,
+- the location is empty or open to India (India, remote, worldwide, APAC, …).
+
+Duplicate job URLs across files are dropped. Edit the regexes there to target other roles.
+
+## Candidate profile
+
+`profiles/candidate-profile.json` is the only source for form values. It is gitignored. Top-level fields:
+
+| Field | Used for |
+| --- | --- |
+| `personal`, `address`, `links` | Contact fields on forms (never sent to the scoring report) |
+| `currentJob`, `experience`, `education`, `projects`, `achievements`, `summary` | Work-history fields and drafted answers |
+| `skills`, `yearsOfExperience` | Scoring and skill questions |
+| `jobPreferences` | Titles, work modes, locations, notice period, CTC, work authorization |
+| `resumePath` | Resume upload, e.g. `./private/resume.pdf` |
+| `minimumMatchScore` | Jobs scoring below this are marked `skip` |
+| `customAnswers` | Answers to recruiter questions, saved automatically after you answer them once |
+
+## Application behaviour
+
+- Opens each job in a new tab of your everyday Chrome, follows the Apply button to the company's form (Greenhouse, Lever, Workday, Ashby, …) and fills it from your profile.
+- Submits on its own when every value is already known. Stops for missing facts, drafted answers, logins, OTPs and CAPTCHAs. It never types passwords, creates accounts or solves CAPTCHAs.
+- Marks a job `submitted` only after it sees a confirmation. Other statuses: `skipped`, `failed`, `login_required`, `manual_action_required`, `verification_required`.
+- Logs every result to `data/output/applications.json`, which is also the duplicate check.
+
+## Configuration
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `JOBFEED_INPUT_DIR` | `./data/input` | Where `jobfeed` writes Excel files and `jobfeed-ai` reads them |
+| `BROWSER_PROFILE_DIR` | `./private/browser-profile` | Chrome profile for the `browser` command (holds login cookies) |
+
+## Project structure
+
+```text
+.claude/skills/        Claude Code skills: analyze-jobs, apply-job, apply-all
+src/
+  index.ts             CLI entry point and commands
+  config/settings.ts   Paths from environment variables
+  jobfeed/runner.ts    Runs the jobfeed CLI non-interactively
+  excel/               Excel file discovery and row reading (ExcelJS)
+  jobs/                Row-to-job normalization, dedupe, shortlist rules
+  browser/             Playwright Chrome launcher for the browser command
+tests/                 Unit tests (node:test)
+data/input/            jobfeed Excel output (gitignored)
+data/output/           Shortlists, analysis reports, applications.json (gitignored)
+profiles/              Candidate profile (gitignored)
+private/               Resume and browser profile (gitignored)
+```
+
+## Development
 
 ```bash
-npm start                            # show usage and all options
-npm start -- import --input ./some/other/folder     # read Excel files from another folder (works for shortlist too)
-npm start -- open "<apply-link-from-your-excel>"         # open the job in your everyday Chrome (your logins) to apply yourself
-npm start -- browser                 # open Chrome with the jobfeed profile (blank page)
-npm start -- browser "<apply-link-from-your-excel>"      # open a job page (quote the link); logins are kept in private/browser-profile
+npm test                          # all unit tests
+node --test tests/jobs.test.ts    # one test file
+npm run typecheck                 # tsc, no emit
 ```
 
-### Test and check
+Git hooks (husky):
 
-```bash
-npm test                             # all unit tests (tests/*.test.ts)
-node --test tests/jobs.test.ts       # one test file
-npm run typecheck                    # TypeScript type check (tsc, no output files)
-```
+- **pre-commit** runs `npm run typecheck` and `npm test`.
+- **commit-msg** enforces Conventional Commits: `type(scope): description`, e.g. `feat(jobs): add location filter`.
 
-The pre-commit hook runs `npm run typecheck` and `npm test`, so a failing check blocks the commit.
+## Privacy
 
-## 1. Project Overview
+Job data, your profile, resume and browser profile stay on your machine and are excluded from Git by `.gitignore`. The scoring report contains only skills and experience, never contact or address details. Never commit `.env`, `profiles/`, `private/` or `data/`.
 
-The existing `jobfeed` command discovers jobs (including remote roles
-and jobs posted within the last seven days) and exports job listings to
-Excel files. This project should reuse that output instead of rebuilding
-job discovery.
+## Troubleshooting
 
-`jobfeed-ai` will read the generated Excel files, analyze job relevance
-using an LLM, and help complete application workflows using browser
-automation where permitted. It should track every job's processing and
-application status.
+| Problem | Fix |
+| --- | --- |
+| `/apply-job` says no browser is connected | Install Claude in Chrome, sign in with the same Claude account, keep Chrome open |
+| `fetch` warns a section failed | `jobfeed` saved the other sections; check the listed files and rerun later |
+| `browser` says the window is already open | Use the open window, or close it and rerun |
+| Shortlist is empty | Run `npm start -- import` to check the Excel columns, then loosen the rules in `prefilter.ts` |
 
-### Core principle
+## License
 
-**Discover with `jobfeed`; analyze and assist with applications using
-`jobfeed-ai`.**
-
-The system must not claim an application was submitted unless it has
-verified a successful submission signal.
-
-## 2. Goals
-
--   Automatically locate and read Excel files generated by `jobfeed`.
--   Normalize job records and detect duplicates.
--   Analyze job descriptions against a user-configured profile and
-    resume.
--   Rank jobs by relevance and explain the match.
--   Prepare truthful, job-specific application answers.
--   Automate supported application form interactions with a browser
-    automation tool.
--   Ask for user approval before final submission by default.
--   Verify outcomes and track submitted, skipped, failed, and
-    review-required applications.
--   Support scheduled runs, logs, safe retries, and cost controls.
--   Keep credentials, API keys, and personal data secure.
-
-## 3. Non-Goals for the Initial Release
-
--   Replacing the existing `jobfeed` job discovery functionality.
--   Bypassing CAPTCHA, MFA, login challenges, paywalls, or other access
-    controls.
--   Fabricating qualifications, work history, education, salary details,
-    or answers.
--   Applying to every job without relevance checks or duplicate
-    protection.
--   Guaranteeing that every job portal can be automated.
--   Storing passwords or API keys in source code, Excel files, or logs.
-
-## 4. Intended User Flow
-
-1.  The scheduler or user starts a run.
-2.  The system runs `jobfeed`, or reads its already-generated Excel
-    output.
-3.  The Excel reader discovers files in a configured directory.
-4.  The parser validates columns and normalizes job records.
-5.  Duplicate detection checks the job URL and a normalized
-    company/title/location key.
-6.  The job analyzer fetches or reads the job description when
-    available.
-7.  The LLM evaluates fit against the user's profile and returns
-    structured results.
-8.  Jobs below the configured threshold are marked `skipped_low_match`.
-9.  Suitable jobs enter the application queue.
-10. The browser automation layer opens the job application page and
-    identifies supported fields.
-11. The agent fills known fields and uploads the selected resume when
-    supported.
-12. The user reviews the completed application and approves submission.
-13. The system submits only after approval, unless a future explicitly
-    configured mode allows permitted automatic submission.
-14. The agent verifies the result from a confirmation message,
-    confirmation page, or other reliable signal.
-15. The database and exported report are updated.
-16. A run summary reports successes, skips, failures, review-required
-    items, and estimated LLM usage.
-
-## 5. High-Level Architecture
-
-``` mermaid
-flowchart TD
-    A[Manual Trigger or Scheduler] --> B[Jobfeed Runner]
-    B --> C[Excel Output Directory]
-    C --> D[Excel Discovery and Parser]
-    D --> E[Normalize and Deduplicate]
-    E --> F[Job Description Enrichment]
-    F --> G[LLM Job Analyzer]
-    G --> H{Meets Fit Threshold?}
-    H -->|No| I[Mark Skipped]
-    H -->|Yes| J[Application Queue]
-    J --> K[Browser Automation]
-    K --> L[Fill Supported Fields]
-    L --> M[User Review and Approval]
-    M -->|Approved| N[Submit Application]
-    M -->|Needs Changes| O[Save as Review Required]
-    N --> P[Verify Submission]
-    P --> Q[Update Database and Report]
-    I --> Q
-    O --> Q
-```
-
-### Component responsibilities
-
-  -----------------------------------------------------------------------
-  Component                           Responsibility
-  ----------------------------------- -----------------------------------
-  Scheduler                           Starts the workflow on a schedule
-                                      or manual trigger
-
-  Jobfeed adapter                     Runs the existing CLI when
-                                      configured, or consumes existing
-                                      output
-
-  Excel reader                        Finds and parses generated
-                                      `.xlsx`/`.xls` files
-
-  Normalizer                          Maps source columns to a consistent
-                                      internal job schema
-
-  Deduplicator                        Prevents repeated processing and
-                                      duplicate applications
-
-  Job-description service             Reads available descriptions and
-                                      records source/availability
-
-  LLM provider                        Analyzes fit and drafts answers
-                                      using structured output
-
-  Application queue                   Limits concurrency, supports
-                                      retries, and tracks progress
-
-  Browser adapter                     Automates supported browser
-                                      interactions
-
-  Approval layer                      Displays completed form data and
-                                      requires explicit approval by
-                                      default
-
-  Status tracker                      Stores job and application state
-                                      changes
-
-  Reporter                            Produces run summaries and optional
-                                      updated Excel/CSV reports
-  -----------------------------------------------------------------------
-
-## 6. Suggested Technology Stack
-
--   **Runtime:** Node.js with TypeScript
--   **Existing job discovery:** Existing `jobfeed` CLI/package
--   **Excel parsing:** ExcelJS or SheetJS
--   **LLM integration:** Provider adapter for OpenAI, Gemini, or a
-    compatible/local model
--   **Browser automation:** Playwright
--   **Database:** SQLite for a local MVP; PostgreSQL for a hosted
-    multi-user service
--   **Scheduling:** GitHub Actions, operating-system scheduler, or a
-    server cron job
--   **Validation:** Zod or another schema-validation library
--   **Testing:** Node.js test runner or Vitest; Playwright tests for
-    browser workflows
-
-Choose one Excel library and one test framework for the first version
-rather than adding multiple alternatives immediately.
-
-## 7. Repository Structure
-
-``` text
-jobfeed-ai/
-├── src/
-│   ├── config/
-│   │   ├── env.ts
-│   │   └── settings.ts
-│   ├── jobfeed/
-│   │   └── runner.ts
-│   ├── excel/
-│   │   ├── discover-files.ts
-│   │   ├── parse-jobs.ts
-│   │   └── export-report.ts
-│   ├── jobs/
-│   │   ├── normalize.ts
-│   │   ├── deduplicate.ts
-│   │   └── job.schema.ts
-│   ├── llm/
-│   │   ├── provider.ts
-│   │   ├── analyze-job.ts
-│   │   └── draft-answers.ts
-│   ├── agents/
-│   │   ├── job-analysis.agent.ts
-│   │   └── application.agent.ts
-│   ├── browser/
-│   │   ├── browser-manager.ts
-│   │   ├── form-detector.ts
-│   │   └── form-filler.ts
-│   ├── approvals/
-│   │   └── review-queue.ts
-│   ├── applications/
-│   │   ├── process-application.ts
-│   │   └── verify-submission.ts
-│   ├── storage/
-│   │   ├── database.ts
-│   │   └── repositories/
-│   ├── scheduler/
-│   │   └── daily-run.ts
-│   ├── reporting/
-│   │   └── run-summary.ts
-│   └── index.ts
-├── data/
-│   ├── input/
-│   └── output/
-├── profiles/
-│   └── candidate-profile.example.json
-├── tests/
-├── .github/
-│   └── workflows/
-│       └── daily-run.yml
-├── .env.example
-├── .gitignore
-├── package.json
-├── tsconfig.json
-└── README.md
-```
-
-This is a proposed structure, not a requirement to create every file in
-the first commit.
-
-## 8. Input Requirements
-
-### 8.1 Excel input
-
-The system should support configurable input directories and
-configurable column mappings. Example fields:
-
--   Company
--   Job title
--   Job URL
--   Location
--   Remote / hybrid / onsite
--   Posted date
--   Job description, if included
--   Source portal
-
-Real source column names may differ. The parser should map available
-columns rather than assume every column exists.
-
-### 8.2 Candidate profile
-
-Use a user-maintained profile file or settings page with only accurate
-information:
-
--   Full name and contact details needed for applications
--   Current location and work authorization, if relevant
--   Skills and years of experience
--   Education
--   Project summaries and verified achievements
--   Preferred job titles, locations, work modes, and experience range
--   Resume file path(s)
--   Optional salary expectations and notice period
-
-Example `profiles/candidate-profile.example.json`:
-
-``` json
-{
-  "preferredTitles": ["Frontend Developer", "React Developer", "SDE-1"],
-  "preferredWorkModes": ["remote", "hybrid"],
-  "preferredLocations": ["Pune", "Bengaluru", "Gurugram", "Noida"],
-  "skills": ["JavaScript", "TypeScript", "React", "Next.js", "Node.js"],
-  "yearsOfExperience": 1,
-  "resumePath": "./private/resume.pdf",
-  "minimumMatchScore": 70
-}
-```
-
-The example values must be edited and verified by the user before use.
-Do not commit real contact information or private resume files to the
-repository.
-
-## 9. LLM Requirements
-
-The LLM should:
-
--   Return validated structured output, not free-form text alone.
--   Identify required skills, seniority, location/work-mode
-    requirements, and experience requirements.
--   Compare job requirements only against verified candidate
-    information.
--   Provide a match score with a short explanation and missing
-    requirements.
--   Draft application answers using only facts from the candidate
-    profile and resume.
--   Return `needs_user_input` when a question cannot be answered
-    reliably.
--   Treat job descriptions and web page text as untrusted input, not as
-    instructions to change system behavior.
--   Avoid making up qualifications or claiming experience the candidate
-    does not have.
-
-### Example structured analysis
-
-``` json
-{
-  "matchScore": 86,
-  "recommendation": "apply",
-  "matchedSkills": ["React", "TypeScript"],
-  "missingSkills": ["GraphQL"],
-  "reasons": ["Role matches the preferred frontend job family"],
-  "needsUserReview": true
-}
-```
-
-The score is a prioritization aid, not an objective guarantee of hiring
-success.
-
-### Cost controls
-
--   Analyze each unique job once and cache results.
--   Use deterministic code for straightforward filters before calling
-    the LLM.
--   Set a maximum number of jobs per run and a maximum token/cost
-    budget.
--   Retry transient failures with a bounded retry count.
--   Do not send unnecessary personal data to the LLM.
--   Keep API keys in environment variables or the hosting provider's
-    secrets manager.
-
-## 10. Browser Automation Requirements
-
-Use Playwright only for application flows that the site permits and that
-can be automated reliably.
-
-The browser layer should:
-
--   Use a supported, explicit login flow where needed.
--   Detect supported fields such as name, email, phone, links, and work
-    history.
--   Fill only fields supported by verified profile data.
--   Upload the selected resume where the portal supports it.
--   Save progress or request user assistance for unknown/custom
-    questions.
--   Pause for CAPTCHA, MFA, or login challenges; do not bypass them.
--   Respect site terms, rate limits, and access controls.
--   Avoid submitting duplicate applications.
--   Keep screenshots or traces only when necessary and protect them as
-    potentially sensitive data.
--   Never report success solely because a click occurred.
-
-### Submission verification
-
-Mark an application `submitted` only when a reliable confirmation signal
-is detected, such as a confirmation page or application reference.
-Otherwise mark it `verification_required` and ask the user to check the
-portal.
-
-## 11. Application States
-
-Suggested statuses:
-
--   `discovered`
--   `parsed`
--   `duplicate`
--   `analysis_pending`
--   `analyzed`
--   `skipped_low_match`
--   `queued`
--   `form_in_progress`
--   `review_required`
--   `approved`
--   `submitted`
--   `verification_required`
--   `failed`
--   `login_required`
--   `manual_action_required`
-
-Every state change should include a timestamp and a short reason. Keep
-job-processing status separate from application status where possible.
-
-## 12. Data Model
-
-### Job
-
--   `id`
--   `sourceUrl`
--   `company`
--   `title`
--   `location`
--   `workMode`
--   `postedAt`
--   `description`
--   `contentHash`
--   `matchScore`
--   `analysisJson`
--   `firstSeenAt`
--   `lastSeenAt`
-
-### Application
-
--   `id`
--   `jobId`
--   `status`
--   `resumeVersion`
--   `draftAnswers`
--   `submittedAt`
--   `confirmationReference`
--   `lastError`
--   `createdAt`
--   `updatedAt`
-
-### Run
-
--   `id`
--   `startedAt`
--   `finishedAt`
--   `status`
--   `jobsRead`
--   `jobsAnalyzed`
--   `applicationsSubmitted`
--   `applicationsSkipped`
--   `applicationsFailed`
--   `estimatedLlmCost`
-
-Store only data needed for the workflow and provide a way to remove it.
-
-## 13. Scheduling and Deployment
-
-The workflow can run daily using:
-
-1.  **GitHub Actions:** useful for scheduled discovery and analysis,
-    subject to account limits and schedule delays.
-2.  **A VPS or cloud server:** useful when persistent storage or browser
-    automation is needed.
-3.  **A local scheduler:** useful for development; the machine must be
-    on and connected.
-
-A daily scheduled run should:
-
-1.  Load configuration and validate secrets.
-2.  Run `jobfeed` if configured to do so, or consume existing Excel
-    files.
-3.  Discover files and record file-processing metadata.
-4.  Parse, normalize, and deduplicate jobs.
-5.  Analyze only new or changed jobs.
-6.  Queue eligible applications within configured limits.
-7.  Fill supported forms and create review items.
-8.  Submit only after approval by default.
-9.  Export a report and send/display a summary.
-10. Exit with a meaningful success/failure code.
-
-### Important hosting limitation
-
-GitHub Actions runners are ephemeral. Files written during a run do not
-automatically persist into the next run. Store results in a database or
-upload artifacts, and configure browser dependencies if using
-Playwright. Scheduled jobs are not guaranteed to start at the exact
-minute.
-
-## 14. Security and Privacy
-
--   Keep `.env`, API keys, authentication state, cookies, resumes, logs
-    with personal data, and generated private application data out of
-    Git.
--   Provide `.env.example` with placeholder values only.
--   Use least-privilege tokens and rotate leaked credentials.
--   Do not log secrets or full sensitive form answers.
--   Encrypt stored sensitive data when appropriate and restrict access.
--   Use a dedicated browser profile for automation and protect its
-    session state.
--   Do not store portal passwords in plain text.
--   Get explicit user approval before final application submission in
-    the MVP.
--   Provide clear deletion and retention behavior for stored data.
-
-## 15. Error Handling and Reliability
-
-The system should handle:
-
--   Missing or malformed Excel files
--   Changed Excel column names
--   Invalid or expired job URLs
--   Missing job descriptions
--   LLM timeouts, rate limits, and invalid structured responses
--   Browser navigation failures
--   Unsupported form fields
--   Session expiry and login challenges
--   Duplicate job records
--   Submission confirmation not detected
--   Interrupted or partially completed runs
-
-Use bounded retries with backoff for transient errors. Do not
-automatically retry a final submission unless the system can establish
-that the earlier submission did not succeed.
-
-## 16. MVP Acceptance Criteria
-
-The MVP is ready when:
-
--   [ ] It can read a sample Excel file produced by `jobfeed`.
--   [ ] It can map source columns to a normalized job schema.
--   [ ] It detects duplicate jobs across multiple files and runs.
--   [ ] It filters jobs using configurable rules.
--   [ ] It analyzes new jobs through a configurable LLM provider.
--   [ ] It stores a match score, reasons, and missing skills.
--   [ ] It never invents candidate qualifications or application
-    answers.
--   [ ] It can create an application review queue.
--   [ ] It can fill supported fields on at least one permitted test
-    application flow.
--   [ ] It requires explicit approval before final submission by
-    default.
--   [ ] It verifies submission before marking an application as
-    submitted.
--   [ ] It records errors and produces a run summary.
--   [ ] It can run manually and through a configured scheduler.
--   [ ] Secrets and personal data are excluded from version control.
-
-## 17. Implementation Roadmap
-
-### Phase 1 --- Excel integration
-
--   Inspect actual `jobfeed` output and package interface.
--   Define input/output paths and column mapping.
--   Implement Excel discovery, parsing, normalization, and
-    deduplication.
--   Add fixtures and unit tests.
-
-### Phase 2 --- Job intelligence
-
--   Create the candidate profile schema.
--   Add an LLM provider interface.
--   Implement structured job matching and answer drafting.
--   Add validation, caching, budgets, and error handling.
-
-### Phase 3 --- Application tracking
-
--   Add SQLite persistence and application states.
--   Add a CLI summary and updated Excel/CSV report.
--   Ensure repeated runs do not create duplicate applications.
-
-### Phase 4 --- Browser assistance
-
--   Integrate Playwright.
--   Start with one permitted application flow.
--   Implement field mapping, resume upload, screenshots/traces when
-    appropriate, and manual review.
--   Verify confirmation signals and add safe failure handling.
-
-### Phase 5 --- Scheduling and deployment
-
--   Add a daily scheduler.
--   Configure secrets securely.
--   Configure persistent storage or artifact handling.
--   Test scheduled runs, failures, and recovery.
-
-### Phase 6 --- Optional enhancements
-
--   Dashboard for jobs and application statuses.
--   Email or notification summaries.
--   Additional portal-specific adapters where permitted.
--   Multiple LLM providers, including local models.
--   Resume variants based on verified experience.
--   Analytics for application volume and response rates.
-
-## 18. Example CLI Design
-
-Proposed commands; implement only after confirming the actual `jobfeed`
-package interface:
-
-``` bash
-# Read and validate Excel files
-jobfeed-ai import --input ./data/input
-
-# Analyze new jobs
-jobfeed-ai analyze
-
-# Show jobs awaiting review
-jobfeed-ai review
-
-# Process approved applications
-jobfeed-ai apply --approved-only
-
-# Produce a report
-jobfeed-ai report
-
-# Run the full safe workflow
-jobfeed-ai run
-```
-
-The default `run` command should not silently submit applications. It
-should analyze jobs, prepare forms, and place them in the review queue
-unless the user explicitly configures a permitted automatic-submission
-mode.
-
-## 19. Decisions to Confirm Before Coding
-
-1.  How is `jobfeed` installed and invoked: an npm dependency, a global
-    CLI command, or a separate repository script?
-2.  Where are generated Excel files stored, and what are their actual
-    column names?
-3.  Which LLM provider should be used, and what is the maximum daily
-    budget?
-4.  Which application sites should be supported first?
-5.  Where should the system run: GitHub Actions, a VPS, or a local
-    machine?
-6.  Should all applications require approval? **Recommended for the MVP:
-    yes.**
-
-------------------------------------------------------------------------
-
-## Final Recommendation
-
-Build `jobfeed-ai` as a separate TypeScript/Node.js repository that
-consumes the existing `jobfeed` output. Start with Excel parsing,
-deduplication, and AI job analysis. Add browser automation only after
-those components are reliable, and keep final application submission
-behind an explicit approval step by default.
+ISC
