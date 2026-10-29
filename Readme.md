@@ -29,6 +29,25 @@ npm start -- shortlist               # filter to early-career web roles open to 
 
 Then open this folder in Claude Code and run `/analyze-jobs`. It scores the shortlist on your Claude plan (no API key) and writes `data/output/analysis-<date>.md`.
 
+### Applying (agent in your own Chrome)
+
+One-time: install the **Claude in Chrome** extension from the Chrome Web Store and sign in with the same Claude account you use for Claude Code. Keep Chrome open.
+
+Then, in Claude Code in this folder:
+
+```text
+/apply-job                      # next best "apply" job from the latest analysis report
+/apply-job https://...          # or a specific job link
+```
+
+How it works (no API key: the model is Claude via your plan, and the agent is Claude Code plus the extension):
+
+1. Opens the job in a new tab of your everyday Chrome, clicks Apply and follows the job site to the company's application form.
+2. Reads the form and fills values from `profiles/candidate-profile.json`. It reuses earlier answers from `customAnswers`, and uploads your resume from `resumePath`.
+3. Asks you for anything the profile doesn't have (notice period, CTC, …), drafts open-ended answers from your profile, and saves both for next time.
+4. Shows you every field and value before typing, and asks again before submitting. It never types passwords or OTPs, and never solves CAPTCHAs; those are yours to do.
+5. Checks for a confirmation and logs the result in `data/output/applications.json`, which prevents applying twice.
+
 ### Other commands
 
 ```bash
